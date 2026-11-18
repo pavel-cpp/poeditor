@@ -1,9 +1,33 @@
+<p align="center">
+  <img src="src/main/resources/META-INF/pluginIcon.svg" width="96" alt="POEditor logo">
+</p>
+
 # POEditor
 
 A lightweight visual editor for gettext `.po` translation files in JetBrains IDEs, inspired by [Poedit](https://poedit.net).
 Every `.po` file opens in a dedicated **POEditor** tab; the plain-text tab stays next to it.
 
-Works in all IntelliJ-based IDEs, version **2026.2 and newer**.
+Works in all IntelliJ-based IDEs (IntelliJ IDEA, CLion, GoLand, PyCharm, WebStorm, ...), version **2026.2 and newer**.
+
+<p align="center">
+  <img src="docs/screenshot.png" width="760" alt="POEditor: entry list, editing panel and a DeepL suggestion">
+</p>
+
+## Installation
+
+- **From JetBrains Marketplace** (after the first release): *Settings | Plugins | Marketplace*, search for **POEditor**.
+- **From a file**: download `POEditor-<version>.zip`, then *Settings | Plugins | ⚙ | Install Plugin from Disk...* and
+  restart the IDE.
+
+## Quick start
+
+1. Open any `.po` file: the **POEditor** tab is selected automatically (the **Text** tab is still there).
+2. Pick an entry in the list. The source text, notes, references and the translation fields appear below.
+3. Type the translation. It is written into the file as you type, so Undo and `Ctrl+S` work as usual.
+4. `Ctrl+Enter` approves the entry and jumps to the next unfinished one.
+5. Optional: press **Suggest translation** to see a machine translation under your text, then click **Use** to take it.
+
+The file's `Language:` header decides the target language, so make sure it is set (for example `ru_RU`).
 
 ## Features
 
