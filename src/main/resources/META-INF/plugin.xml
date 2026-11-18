@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>net.poedit.light</id>
-    <name>Poedit Light</name>
-    <vendor>poedit-light</vendor>
+    <name>POEditor</name>
+    <vendor>pavel-remdenok</vendor>
     <description><![CDATA[
         Lightweight visual editor for gettext <code>.po</code> files, modelled on Poedit:
         entry list with search and filters, source/translation panes, plural forms,
@@ -12,7 +12,82 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <fileType name="PO" implementationClass="net.poedit.light.PoFileType" fieldName="INSTANCE"
-                  extensions="po"/>
+                  language="TEXT" extensions="po"/>
         <fileEditorProvider implementation="net.poedit.light.PoEditorProvider"/>
     </extensions>
+
+    <actions>
+        <!-- Poedit's default shortcuts (Windows/Linux). Rebind in Settings | Keymap | POEditor. -->
+        <group id="POEditor.Actions" text="POEditor" popup="true">
+            <action id="POEditor.Next" class="net.poedit.light.PoNext" text="Next Translation"
+                    description="Select the next entry">
+                <keyboard-shortcut keymap="$default" first-keystroke="control DOWN"/>
+            </action>
+            <action id="POEditor.Previous" class="net.poedit.light.PoPrevious" text="Previous Translation"
+                    description="Select the previous entry">
+                <keyboard-shortcut keymap="$default" first-keystroke="control UP"/>
+            </action>
+            <action id="POEditor.NextUnfinished" class="net.poedit.light.PoNextUnfinished" text="Next Unfinished"
+                    description="Select the next untranslated or needs-work entry">
+                <keyboard-shortcut keymap="$default" first-keystroke="control shift DOWN"/>
+            </action>
+            <action id="POEditor.PreviousUnfinished" class="net.poedit.light.PoPreviousUnfinished" text="Previous Unfinished"
+                    description="Select the previous untranslated or needs-work entry">
+                <keyboard-shortcut keymap="$default" first-keystroke="control shift UP"/>
+            </action>
+            <action id="POEditor.DoneAndNext" class="net.poedit.light.PoDoneAndNext" text="Done and Next"
+                    description="Approve the entry and go to the next unfinished one">
+                <keyboard-shortcut keymap="$default" first-keystroke="control ENTER"/>
+            </action>
+            <action id="POEditor.PreviouslyEdited" class="net.poedit.light.PoPreviouslyEdited" text="Previously Edited"
+                    description="Go back to the entry edited before this one">
+                <keyboard-shortcut keymap="$default" first-keystroke="control shift ENTER"/>
+            </action>
+            <action id="POEditor.NextPage" class="net.poedit.light.PoNextPage" text="Next Page"
+                    description="Scroll the entry list down by a page">
+                <keyboard-shortcut keymap="$default" first-keystroke="control PAGE_DOWN"/>
+            </action>
+            <action id="POEditor.PreviousPage" class="net.poedit.light.PoPreviousPage" text="Previous Page"
+                    description="Scroll the entry list up by a page">
+                <keyboard-shortcut keymap="$default" first-keystroke="control PAGE_UP"/>
+            </action>
+            <action id="POEditor.PreviousForm" class="net.poedit.light.PoPreviousForm" text="Previous Plural Form"
+                    description="Switch to the previous plural form">
+                <keyboard-shortcut keymap="$default" first-keystroke="control alt LEFT"/>
+            </action>
+            <action id="POEditor.NextForm" class="net.poedit.light.PoNextForm" text="Next Plural Form"
+                    description="Switch to the next plural form">
+                <keyboard-shortcut keymap="$default" first-keystroke="control alt RIGHT"/>
+            </action>
+            <action id="POEditor.ClearTranslation" class="net.poedit.light.PoClearTranslation" text="Clear Translation"
+                    description="Empty all translation forms of the entry">
+                <keyboard-shortcut keymap="$default" first-keystroke="control K"/>
+            </action>
+            <action id="POEditor.CopyFromSource" class="net.poedit.light.PoCopyFromSource" text="Copy from Source Text"
+                    description="Use the source text as the translation">
+                <keyboard-shortcut keymap="$default" first-keystroke="control B"/>
+            </action>
+            <action id="POEditor.CopyFromSingular" class="net.poedit.light.PoCopyFromSingular" text="Copy from Singular"
+                    description="Use the singular source text in every plural form">
+                <keyboard-shortcut keymap="$default" first-keystroke="control shift B"/>
+            </action>
+            <action id="POEditor.ToggleNeedsWork" class="net.poedit.light.PoToggleNeedsWork" text="Translation Needs Work"
+                    description="Toggle the fuzzy flag">
+                <keyboard-shortcut keymap="$default" first-keystroke="control U"/>
+            </action>
+            <action id="POEditor.EditComment" class="net.poedit.light.PoEditComment" text="Edit Comment"
+                    description="Edit the translator comment">
+                <keyboard-shortcut keymap="$default" first-keystroke="control M"/>
+            </action>
+            <action id="POEditor.Find" class="net.poedit.light.PoFind" text="Find"
+                    description="Focus the search field">
+                <keyboard-shortcut keymap="$default" first-keystroke="control F"/>
+            </action>
+        </group>
+    </actions>
+
+    <projectListeners>
+        <listener class="net.poedit.light.PoOpenListener"
+                  topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
+    </projectListeners>
 </idea-plugin>

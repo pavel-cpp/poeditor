@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+  <!-- source language tile: bold "A" -->
+  <rect x="3" y="3" width="22" height="22" rx="4.5" fill="#3D7EFF"/>
+  <path d="M9.7 6.5H13.3L17.2 19H14.2L13.4 16.4H9.6L8.8 19H5.8ZM11.5 10.4L12.65 14H10.35Z" fill="#FFFFFF" fill-rule="evenodd"/>
+  <!-- target language tile: "文" -->
+  <rect x="18" y="18" width="19.5" height="19.5" rx="4.5" fill="#FFFFFF" stroke="#3D7EFF" stroke-width="1.6"/>
+  <path transform="translate(0.5 0.5)" d="M26.8 19.7L27.6 22.1M21.8 24.5H32.2M28.3 24.6C27.7 28.4 25.6 31.6 22.2 33.9M23.2 24.6C25 29.4 28.6 32.2 32.4 33.9" fill="none" stroke="#1F4FD8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

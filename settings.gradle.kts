@@ -1,1 +1,1 @@
-rootProject.name = "poedit-light"
+rootProject.name = "POEditor"

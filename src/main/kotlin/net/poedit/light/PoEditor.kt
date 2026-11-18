@@ -1,6 +1,8 @@
 package net.poedit.light
 
-import com.intellij.icons.AllIcons
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.application.runReadActionBlocking
+import com.intellij.openapi.keymap.KeymapUtil
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
@@ -8,37 +10,72 @@ import com.intellij.openapi.fileEditor.*
 import com.intellij.openapi.fileTypes.LanguageFileType
 import com.intellij.openapi.fileTypes.PlainTextLanguage
 import com.intellij.openapi.project.DumbAware
+import com.intellij.openapi.project.IndexNotReadyException
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
+import com.intellij.openapi.ui.MessageType
+import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.util.UserDataHolderBase
+import com.intellij.openapi.util.text.StringUtil
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.psi.search.FilenameIndex
+import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.ui.*
 import com.intellij.ui.components.*
 import com.intellij.ui.table.JBTable
 import com.intellij.util.Alarm
 import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
-import java.awt.BorderLayout
+import com.intellij.util.ui.UIUtil
+import java.awt.*
 import java.awt.event.ActionEvent
-import java.awt.event.MouseAdapter
-import java.awt.event.MouseEvent
 import java.beans.PropertyChangeListener
+import java.io.File
 import javax.swing.*
+import javax.swing.event.HyperlinkEvent
 import javax.swing.table.AbstractTableModel
 
 object PoFileType : LanguageFileType(PlainTextLanguage.INSTANCE) {
     override fun getName() = "PO"
     override fun getDescription() = "Gettext translation catalog"
     override fun getDefaultExtension() = "po"
-    override fun getIcon(): Icon = AllIcons.FileTypes.Text
+    override fun getIcon(): Icon = IconLoader.getIcon("/icons/po.svg", PoFileType::class.java)
 }
+
+private const val EDITOR_ID = "poedit-light"
 
 class PoEditorProvider : FileEditorProvider, DumbAware {
     override fun accept(project: Project, file: VirtualFile) = file.extension.equals("po", true)
     override fun createEditor(project: Project, file: VirtualFile): FileEditor = PoEditor(project, file)
-    override fun getEditorTypeId() = "poedit-light"
+    override fun getEditorTypeId() = EDITOR_ID
     override fun getPolicy() = FileEditorPolicy.PLACE_BEFORE_DEFAULT_EDITOR
 }
+
+/** Makes the Poedit tab the selected one whenever a .po file is opened (the plain-text tab stays available). */
+class PoOpenListener : FileEditorManagerListener {
+    override fun fileOpened(source: FileEditorManager, file: VirtualFile) {
+        if (file.extension.equals("po", true)) source.setSelectedEditor(file, EDITOR_ID)
+    }
+}
+
+/** Small status dot for the list: blue = untranslated, orange = needs work (like Poedit). */
+private class Dot(private val color: Color) : Icon {
+    override fun getIconWidth() = JBUI.scale(8)
+    override fun getIconHeight() = JBUI.scale(8)
+    override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
+        val g2 = g.create() as Graphics2D
+        try {
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.color = color
+            g2.fillOval(x, y, iconWidth, iconHeight)
+        } finally { g2.dispose() }
+    }
+}
+
+private val BLUE = JBColor(0x3D7EFF, 0x5A91FF)
+private val ORANGE = JBColor(0xE08A00, 0xD9A343)
 
 /**
  * Poedit-style catalog editor: entry list on top, source/translation pane below.
@@ -46,16 +83,18 @@ class PoEditorProvider : FileEditorProvider, DumbAware {
  */
 class PoEditor(private val project: Project, private val vfile: VirtualFile) : UserDataHolderBase(), FileEditor {
     private val doc = FileDocumentManager.getInstance().getDocument(vfile)!!
-    private var po = parsePo(doc.text)
+    private var po = parsePo(runReadActionBlocking { doc.text })
     private var shown = emptyList<PoEntry>()
     private var current: PoEntry? = null
     private var loading = false          // filling widgets from an entry: ignore their change events
     private var writing = false          // our own document write: don't re-parse
     private var userToggledFuzzy = false // like Poedit's m_dontAutoclearFuzzyStatus
+    private var formCount = 1            // translation forms shown for the current entry (the "Comment" tab comes after them)
+    private val history = ArrayDeque<Pair<String?, String>>() // entries edited by hand, for "Previously Edited"
 
     private val search = SearchTextField()
     private val filter = ComboBox(arrayOf("All", "Needs work", "Untranslated", "Translated"))
-    private val stats = JBLabel().apply { border = JBUI.Borders.empty(2, 6) }
+    private val stats = JBLabel("", UIUtil.ComponentStyle.SMALL, UIUtil.FontColor.BRIGHTER)
 
     private val model = object : AbstractTableModel() {
         override fun getRowCount() = shown.size
@@ -73,57 +112,67 @@ class PoEditor(private val project: Project, private val vfile: VirtualFile) : U
 
     private val source = readOnly()
     private val sourcePlural = readOnly()
-    private val notes = readOnly()
-    private val refs = JBList<String>()
-    private val tabs = JBTabbedPane()
+    private val notes = readOnly().apply { foreground = UIUtil.getContextHelpForeground() }
+    private val tabs = JBTabbedPane()       // translation forms + a "Comment" tab
     private val areas = mutableListOf<JBTextArea>()
     private val needsWork = JBCheckBox("Needs work")
-    private val comment = JBTextArea(2, 40).apply { lineWrap = true; wrapStyleWord = true }
+    private val comment = editable()
+    private val refsBar = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply { isOpaque = false }
 
-    private val pluralBox = titled("Source text (plural)", JBScrollPane(sourcePlural))
-    private val notesBox = titled("Notes for translators", JBScrollPane(notes))
-    private val refsBox = titled("Found in (double-click to open)", JBScrollPane(refs).apply { preferredSize = JBUI.size(100, 60) })
+    private val sourceBox = captioned("SOURCE TEXT", flat(source))
+    private val pluralBox = captioned("SOURCE TEXT (PLURAL)", flat(sourcePlural))
+    private val notesBox = captioned("NOTES FOR TRANSLATORS", flat(notes))
     private val detail = FormBuilder.createFormBuilder()
-        .addComponent(titled("Source text", JBScrollPane(source)))
+        .addComponent(sourceBox)
         .addComponent(pluralBox)
         .addComponent(notesBox)
-        .addComponent(refsBox)
-        .addComponent(titled("Translation", tabs))
-        .addComponent(needsWork)
-        .addComponent(titled("Comment", JBScrollPane(comment)))
-        .addComponentFillVertically(JPanel(), 0)
-        .panel.apply { border = JBUI.Borders.empty(4) }
+        .addComponentFillVertically(tabs, 0) // the translation gets all the spare height
+        .panel.apply { border = JBUI.Borders.empty(8, 12, 4, 12) }
+    // everything below the list: the form plus one thin line ("Needs work" on the left, source references next to it)
+    private val bottom = JPanel(BorderLayout()).apply {
+        add(JBScrollPane(detail).apply { border = JBUI.Borders.empty() }, BorderLayout.CENTER)
+        add(JPanel(BorderLayout(JBUI.scale(12), 0)).apply {
+            border = BorderFactory.createCompoundBorder(
+                JBUI.Borders.customLine(JBColor.border(), 1, 0, 0, 0), JBUI.Borders.empty(4, 12))
+            add(needsWork, BorderLayout.WEST)
+            add(refsBar, BorderLayout.CENTER)
+        }, BorderLayout.SOUTH)
+    }
 
-    private val root = JBSplitter(true, 0.5f)
+    // 1px divider with a visible line = the top edge of the bottom panel; the size is remembered between sessions
+    private val root = OnePixelSplitter(true, "poeditor.splitter", 0.66f)
     private val reloadAlarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
 
     init {
         // ---- list ----
         table.setShowGrid(false)
+        table.intercellSpacing = Dimension(0, 0)
+        table.rowHeight = JBUI.scale(26)
+        table.tableHeader.reorderingAllowed = false
+        table.emptyText.text = "No matching strings"
         table.selectionModel.selectionMode = ListSelectionModel.SINGLE_SELECTION
-        table.columnModel.getColumn(0).apply { minWidth = 28; maxWidth = 28 }
+        table.columnModel.getColumn(0).apply { minWidth = JBUI.scale(30); maxWidth = JBUI.scale(30) }
         table.setDefaultRenderer(Any::class.java, object : ColoredTableCellRenderer() {
             override fun customizeCellRenderer(t: JTable, value: Any?, sel: Boolean, focus: Boolean, row: Int, col: Int) {
                 val e = shown.getOrNull(row) ?: return
                 val state = e.state(po.nplurals)
-                if (col == 0) { if (state == 1) icon = AllIcons.General.Warning; return }
+                ipad = JBUI.insets(0, 8)
+                if (col == 0) { if (state != 0) icon = Dot(if (state == 1) ORANGE else BLUE); return }
                 append(value as? String ?: "", when (state) {
-                    1 -> SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, JBColor(0xB07000, 0xD9A343))
+                    1 -> SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, ORANGE)
                     2 -> SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES
                     else -> SimpleTextAttributes.REGULAR_ATTRIBUTES
                 })
             }
         })
         table.selectionModel.addListSelectionListener { if (!it.valueIsAdjusting) show(shown.getOrNull(table.selectedRow)) }
+        search.textEditor.emptyText.setText("Search strings")
         search.addDocumentListener(object : DocumentAdapter() {
             override fun textChanged(e: javax.swing.event.DocumentEvent) = applyFilter()
         })
         filter.addActionListener { applyFilter() }
 
         // ---- detail ----
-        refs.addMouseListener(object : MouseAdapter() {
-            override fun mouseClicked(e: MouseEvent) { if (e.clickCount == 2) refs.selectedValue?.let(::openRef) }
-        })
         comment.document.addDocumentListener(object : DocumentAdapter() {
             override fun textChanged(e: javax.swing.event.DocumentEvent) {
                 val en = current ?: return
@@ -142,18 +191,22 @@ class PoEditor(private val project: Project, private val vfile: VirtualFile) : U
 
         // ---- layout ----
         val top = JPanel(BorderLayout()).apply {
-            add(JPanel(BorderLayout(JBUI.scale(6), 0)).apply { add(search, BorderLayout.CENTER); add(filter, BorderLayout.EAST) }, BorderLayout.NORTH)
-            add(JBScrollPane(table), BorderLayout.CENTER)
-            add(stats, BorderLayout.SOUTH)
+            add(JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+                border = JBUI.Borders.empty(6, 8)
+                add(search, BorderLayout.CENTER)
+                add(filter, BorderLayout.EAST)
+            }, BorderLayout.NORTH)
+            add(JBScrollPane(table).apply { border = JBUI.Borders.customLine(JBColor.border(), 1, 0, 0, 0) }, BorderLayout.CENTER)
+            add(stats.apply { border = JBUI.Borders.empty(4, 12) }, BorderLayout.SOUTH) // no own line: the divider below is the only edge
         }
         root.firstComponent = top
-        root.secondComponent = JBScrollPane(detail)
+        root.secondComponent = bottom
 
-        // Poedit shortcuts: Ctrl+Down/Up = next/previous, Ctrl+Shift+Down = next unfinished, Ctrl+U = needs work
-        bind("ctrl DOWN") { go(1, false) }
-        bind("ctrl UP") { go(-1, false) }
-        bind("ctrl shift DOWN") { go(1, true) }
-        bind("ctrl U") { if (current != null) needsWork.doClick() }
+        // Poedit's shortcuts: the actions live in plugin.xml (so they show up in Settings | Keymap) and are attached
+        // to this component with the *active keymap's* shortcuts, which makes them win over IDE actions like Ctrl+K = Commit.
+        ActionManager.getInstance().let { am ->
+            PO_ACTION_IDS.forEach { id -> am.getAction(id)?.registerCustomShortcutSet(KeymapUtil.getActiveKeymapShortcuts(id), root, this) }
+        }
 
         doc.addDocumentListener(object : DocumentListener {
             override fun documentChanged(event: DocumentEvent) {
@@ -185,7 +238,7 @@ class PoEditor(private val project: Project, private val vfile: VirtualFile) : U
 
     private fun reload() {
         val key = current?.let { it.ctx to it.id }
-        po = parsePo(doc.text)
+        po = parsePo(runReadActionBlocking { doc.text })
         current = null
         applyFilter(key)
     }
@@ -217,17 +270,101 @@ class PoEditor(private val project: Project, private val vfile: VirtualFile) : U
 
     private fun updateStats() {
         val s = po.entries.groupingBy { it.state(po.nplurals) }.eachCount()
-        stats.text = "${po.entries.size} strings · ${s[0] ?: 0} translated · ${s[1] ?: 0} need work · ${s[2] ?: 0} untranslated" +
-            (if (po.language.isNotEmpty()) " · ${po.language}" else "")
+        stats.text = "${po.entries.size} strings  ·  ${s[0] ?: 0} translated  ·  ${s[1] ?: 0} need work  ·  ${s[2] ?: 0} untranslated" +
+            (if (po.language.isNotEmpty()) "  ·  ${po.language}" else "")
         table.repaint()
     }
 
-    private fun go(delta: Int, unfinished: Boolean) {
-        var r = table.selectedRow
-        do { r += delta; if (r !in shown.indices) return } while (unfinished && shown[r].state(po.nplurals) == 0)
-        table.setRowSelectionInterval(r, r)
-        table.scrollRectToVisible(table.getCellRect(r, 0, true))
+    // ------------------------------------------------------------------ actions (see PoActions.kt for the shortcuts)
+
+    private fun key(e: PoEntry) = e.ctx to e.id
+
+    private fun select(row: Int, focus: Boolean = true) {
+        table.setRowSelectionInterval(row, row)
+        table.scrollRectToVisible(table.getCellRect(row, 0, true))
+        if (focus) areas.firstOrNull()?.requestFocusInWindow()
+    }
+
+    /** Moves the selection by [delta] entries, optionally only onto unfinished ones, optionally wrapping around. False if nothing was found. */
+    fun navigate(delta: Int, unfinished: Boolean, wrap: Boolean = false): Boolean {
+        val n = shown.size
+        val start = table.selectedRow
+        var r = start
+        repeat(n) {
+            r += delta
+            if (r !in 0 until n) { if (!wrap) return false; r = (r + n) % n }
+            if (r == start) return false
+            if (!unfinished || shown[r].state(po.nplurals) != 0) { select(r); return true }
+        }
+        return false
+    }
+
+    fun page(dir: Int) {
+        if (shown.isEmpty()) return
+        val rows = maxOf(1, table.visibleRect.height / table.rowHeight - 1)
+        select((table.selectedRow.coerceAtLeast(0) + dir * rows).coerceIn(0, shown.size - 1), focus = false)
+    }
+
+    /** Poedit: an approved entry loses "needs work" (unless it was just set), then jump to the next unfinished one, wrapping. */
+    fun doneAndNext() {
+        val e = current ?: return
+        if (e.fuzzy && !userToggledFuzzy) {
+            e.fuzzy = false
+            needsWork.isSelected = false
+            commit(e)
+            refreshRow()
+        }
+        recordEdit(e)
+        navigate(1, unfinished = true, wrap = true)
+    }
+
+    fun previouslyEdited() {
+        val here = current?.let(::key)
+        while (history.isNotEmpty()) {
+            val k = history.removeLast()
+            if (k == here) continue
+            val r = shown.indexOfFirst { key(it) == k }
+            if (r >= 0) { select(r); return }
+        }
+    }
+
+    private fun recordEdit(e: PoEntry) {
+        if (history.lastOrNull() != key(e)) history.addLast(key(e))
+        if (history.size > 50) history.removeFirst()
+    }
+
+    fun pluralForm(delta: Int) {
+        if (current == null) return
+        val i = (tabs.selectedIndex + delta).coerceIn(0, formCount - 1)
+        tabs.selectedIndex = i
+        areas[i].requestFocusInWindow()
+    }
+
+    /** Sets the forms through the text areas, so the normal edit path (document write, fuzzy auto-clear) applies. */
+    private fun setForms(texts: List<String>) {
+        texts.forEachIndexed { i, t -> areas.getOrNull(i)?.text = t }
         areas.firstOrNull()?.requestFocusInWindow()
+    }
+
+    fun clearTranslation() { if (current != null) setForms(List(formCount) { "" }) }
+
+    /** Poedit: form 0 from the singular, the rest from the plural; [singularOnly] puts the singular into every form. */
+    fun copyFromSource(singularOnly: Boolean) {
+        val e = current ?: return
+        setForms(List(formCount) { i -> if (i > 0 && !singularOnly) e.plural ?: e.id else e.id })
+    }
+
+    fun toggleNeedsWork() { if (current != null) needsWork.doClick() }
+
+    fun editComment() {
+        if (current == null) return
+        tabs.selectedIndex = tabs.tabCount - 1
+        comment.requestFocusInWindow()
+    }
+
+    fun focusSearch() {
+        search.textEditor.requestFocusInWindow()
+        search.textEditor.selectAll()
     }
 
     // ------------------------------------------------------------------ detail
@@ -236,20 +373,29 @@ class PoEditor(private val project: Project, private val vfile: VirtualFile) : U
         current = e
         loading = true
         try {
-            detail.isVisible = e != null
+            bottom.isVisible = e != null
             if (e == null) return
             userToggledFuzzy = false
-            source.text = e.id
+            fill(source, e.id)
             pluralBox.isVisible = e.plural != null
-            sourcePlural.text = e.plural.orEmpty()
+            fill(sourcePlural, e.plural.orEmpty())
             val note = (listOfNotNull(e.ctx?.let { "Context: $it" }) + e.extracted).joinToString("\n")
-            notes.text = note
+            fill(notes, note)
             notesBox.isVisible = note.isNotEmpty()
+
             val rs = e.refs.flatMap { it.split(Regex("\\s+")) }.filter { it.isNotEmpty() }
-            refs.setListData(rs.toTypedArray())
-            refsBox.isVisible = rs.isNotEmpty()
+            refsBar.removeAll()
+            if (rs.isNotEmpty()) refsBar.add(JBLabel("Found in:", UIUtil.ComponentStyle.SMALL, UIUtil.FontColor.BRIGHTER))
+            rs.take(3).forEach { r -> refsBar.add(link(r.trim().substringAfterLast('/').substringAfterLast('\\'), r) { openRef(r) }) }
+            if (rs.size > 3) refsBar.add(link("+${rs.size - 3} more", null) { l ->
+                JBPopupFactory.getInstance().createPopupChooserBuilder(rs).setItemChosenCallback { openRef(it) }
+                    .createPopup().showUnderneathOf(l)
+            })
+            refsBar.revalidate()
+            refsBar.repaint()
 
             val n = if (e.plural != null) maxOf(po.nplurals, e.strs.size, 1) else 1
+            formCount = n
             tabs.removeAll()
             for (i in 0 until n) {
                 val a = areaAt(i)
@@ -257,17 +403,18 @@ class PoEditor(private val project: Project, private val vfile: VirtualFile) : U
                 a.caretPosition = 0
                 tabs.addTab(if (e.plural != null) "Form $i" else "Translation", JBScrollPane(a))
             }
-            needsWork.isSelected = e.fuzzy
             comment.text = e.comment
+            comment.caretPosition = 0
+            tabs.addTab(if (e.comment.isEmpty()) "Comment" else "Comment •", JBScrollPane(comment))
+            needsWork.isSelected = e.fuzzy
+            bottom.revalidate()
         } finally { loading = false }
     }
 
     private fun areaAt(i: Int): JBTextArea {
         while (areas.size <= i) {
             val idx = areas.size
-            areas += JBTextArea(4, 40).apply {
-                lineWrap = true
-                wrapStyleWord = true
+            areas += editable().apply {
                 document.addDocumentListener(object : DocumentAdapter() {
                     override fun textChanged(e: javax.swing.event.DocumentEvent) = onTranslation(idx, text)
                 })
@@ -286,29 +433,59 @@ class PoEditor(private val project: Project, private val vfile: VirtualFile) : U
             needsWork.isSelected = false
         }
         commit(e)
+        recordEdit(e)
         refreshRow()
     }
 
+    // ------------------------------------------------------------------ source references
+
     private fun openRef(ref: String) {
-        val m = Regex("^(.*?)(?::(\\d+))?$").matchEntire(ref) ?: return
+        val m = Regex("^(.*?)(?::(\\d+))?$").matchEntire(ref.trim())!! // always matches
+        val path = m.groupValues[1].replace('\\', '/').removePrefix("./")
         val line = m.groupValues[2].toIntOrNull() ?: 1
-        var dir = vfile.parent // refs are relative to the project root, which is usually somewhere above the .po
-        while (dir != null) {
-            dir.findFileByRelativePath(m.groupValues[1])?.let { OpenFileDescriptor(project, it, line - 1, 0).navigate(true); return }
-            dir = dir.parent
+        val target = runReadActionBlocking { findRef(path) } // the file index needs an explicit read action
+        if (target == null) {
+            JBPopupFactory.getInstance()
+                .createHtmlTextBalloonBuilder("File <b>${StringUtil.escapeXmlEntities(path)}</b> not found in the project", MessageType.WARNING, null)
+                .createBalloon().showInCenterOf(root)
+            return
         }
+        OpenFileDescriptor(project, target, line - 1, 0).navigate(true)
     }
 
-    private fun bind(key: String, action: () -> Unit) {
-        root.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(KeyStroke.getKeyStroke(key), key)
-        root.actionMap.put(key, object : AbstractAction() { override fun actionPerformed(e: ActionEvent?) = action() })
+    /**
+     * Refs are whatever xgettext saw: absolute, or relative to the directory it ran in.
+     * Try the path as is, then every directory above the .po, then a project-wide match by file name,
+     * where the candidate sharing the longest tail of the ref's path wins.
+     */
+    private fun findRef(path: String): VirtualFile? {
+        if (File(path).isAbsolute) LocalFileSystem.getInstance().findFileByPath(path)?.let { return it }
+        var dir = vfile.parent
+        while (dir != null) {
+            dir.findFileByRelativePath(path)?.let { return it }
+            dir = dir.parent
+        }
+        val parts = path.split('/').filter { it.isNotEmpty() && it != "." && it != ".." }.reversed()
+        val name = parts.firstOrNull() ?: return null
+        val candidates = try {
+            FilenameIndex.getVirtualFilesByName(name, GlobalSearchScope.projectScope(project))
+        } catch (e: IndexNotReadyException) { return null }
+        fun score(f: VirtualFile) = parts.zip(f.path.split('/').reversed()).takeWhile { (a, b) -> a == b }.size
+        return candidates.maxByOrNull(::score)?.takeIf { candidates.size == 1 || score(it) >= 2 }
+    }
+
+    private fun link(text: String, tip: String?, onClick: (HyperlinkLabel) -> Unit) = HyperlinkLabel(text).also { l ->
+        l.toolTipText = tip
+        l.addHyperlinkListener(object : HyperlinkAdapter() {
+            override fun hyperlinkActivated(e: HyperlinkEvent) = onClick(l)
+        })
     }
 
     // ------------------------------------------------------------------ FileEditor boilerplate
 
     override fun getComponent(): JComponent = root
     override fun getPreferredFocusedComponent(): JComponent = table
-    override fun getName() = "Poedit"
+    override fun getName() = "POEditor"
     override fun getFile(): VirtualFile = vfile
     override fun setState(state: FileEditorState) {}
     override fun isModified() = false
@@ -318,10 +495,40 @@ class PoEditor(private val project: Project, private val vfile: VirtualFile) : U
     override fun dispose() {}
 
     private companion object {
-        fun readOnly() = JBTextArea(2, 40).apply { isEditable = false; lineWrap = true; wrapStyleWord = true }
-        fun titled(title: String, c: JComponent) = JPanel(BorderLayout()).apply {
-            border = IdeBorderFactory.createTitledBorder(title, false)
-            add(c)
+        /** UI font (not monospace) with some breathing room around the text. */
+        fun styled(a: JBTextArea) = a.apply {
+            font = UIUtil.getLabelFont()
+            lineWrap = true
+            wrapStyleWord = true
+            margin = JBUI.insets(6, 8)
+        }
+
+        fun editable() = styled(JBTextArea(4, 40))
+
+        fun readOnly() = styled(JBTextArea(1, 40)).apply {
+            isEditable = false
+            background = UIUtil.getPanelBackground()
+            margin = JBUI.insets(2, 0)
+        }
+
+        /** Borderless scroll pane on the panel background, so read-only text looks like a label, not a field. */
+        fun flat(a: JBTextArea) = JBScrollPane(a).apply {
+            border = JBUI.Borders.empty()
+            viewport.background = UIUtil.getPanelBackground()
+        }
+
+        /** Small grey caption above a component (instead of a heavy titled border). */
+        fun captioned(caption: String, c: JComponent) = JPanel(BorderLayout(0, JBUI.scale(2))).apply {
+            border = JBUI.Borders.emptyBottom(8)
+            add(JBLabel(caption, UIUtil.ComponentStyle.MINI, UIUtil.FontColor.BRIGHTER), BorderLayout.NORTH)
+            add(c, BorderLayout.CENTER)
+        }
+
+        /** Read-only areas are sized to their text (ponytail: estimates wrapping at ~70 chars, so very long lines scroll). */
+        fun fill(a: JBTextArea, text: String) {
+            a.text = text
+            a.rows = text.split('\n').sumOf { maxOf(1, (it.length + 69) / 70) }.coerceIn(1, 4)
+            a.caretPosition = 0
         }
     }
 }
