@@ -1,4 +1,4 @@
-package net.poedit.light
+package io.github.pavelcpp.poeditor
 
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionManager
@@ -50,7 +50,7 @@ object PoFileType : LanguageFileType(PlainTextLanguage.INSTANCE) {
     override fun getIcon(): Icon = IconLoader.getIcon("/icons/po.svg", PoFileType::class.java)
 }
 
-private const val EDITOR_ID = "poedit-light"
+private const val EDITOR_ID = "poeditor"
 private const val BUSY = "Translating…" // shown in the suggestion box while a request is running
 
 class PoEditorProvider : FileEditorProvider, DumbAware {
@@ -278,7 +278,7 @@ class PoEditor(private val project: Project, private val vfile: VirtualFile) : U
         val old = e.end - e.start
         writing = true
         try {
-            WriteCommandAction.runWriteCommandAction(project, "Edit Translation", "poedit-light", Runnable {
+            WriteCommandAction.runWriteCommandAction(project, "Edit Translation", "poeditor", Runnable {
                 doc.replaceString(e.start, e.end, text)
             })
         } finally { writing = false }

@@ -1,4 +1,4 @@
-package net.poedit.light
+package io.github.pavelcpp.poeditor
 
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject

@@ -1,96 +1,118 @@
 <idea-plugin>
-    <id>net.poedit.light</id>
+    <id>poeditor</id>
     <name>POEditor</name>
-    <vendor>pavel-remdenok</vendor>
+    <vendor url="https://github.com/pavel-cpp/poeditor">pavel-remdenok</vendor>
     <description><![CDATA[
-        Lightweight visual editor for gettext <code>.po</code> files, modelled on Poedit:
-        entry list with search and filters, source/translation panes, plural forms,
-        "needs work" (fuzzy) flag, translator comments, source references.
-        Edits go straight into the file's text, so Undo, VCS and the plain-text tab keep working.
+        <p>A lightweight visual editor for gettext <code>.po</code> translation files, inspired by Poedit.
+        Every <code>.po</code> file opens in a dedicated <b>POEditor</b> tab; the plain-text tab stays next to it.</p>
+
+        <h3>Features</h3>
+        <ul>
+            <li>Entry list with search and filters (all / needs work / untranslated / translated) and status dots</li>
+            <li>Source text, context and notes for translators, plural forms, translator comments</li>
+            <li>"Needs work" (fuzzy) flag with Poedit's semantics: editing a translation clears it</li>
+            <li>Source references (<code>#:</code>) as links that open the code at the right line</li>
+            <li>Edits are written straight into the file, entry by entry, so Undo, VCS diffs and the text tab keep
+                working and untouched entries stay byte-identical</li>
+            <li>Poedit's keyboard shortcuts (Ctrl+Up/Down, Ctrl+Enter "Done and Next", Ctrl+K, Ctrl+B, Ctrl+U &hellip;),
+                all rebindable in <i>Settings | Keymap | POEditor</i></li>
+        </ul>
+
+        <h3>Machine translation suggestions (optional)</h3>
+        <p>The <b>Suggest translation</b> button shows a suggestion from <b>DeepL</b> (your own API key, the Free plan
+        includes 500&nbsp;000 characters per month) or <b>MyMemory</b> (no key needed, an optional email raises the
+        daily limit). A suggestion is only displayed below the translation and is inserted only when you click
+        <i>Use</i>. Configure the service in <i>Settings | Tools | POEditor</i>.</p>
+
+        <h3>Privacy</h3>
+        <p>The plugin has no telemetry. The text of an entry is sent to the selected service (DeepL or MyMemory)
+        only when you click <i>Suggest translation</i>. The DeepL API key is kept in the IDE's password safe.</p>
+
+        <p>Not affiliated with Poedit or with the poeditor.com service.</p>
     ]]></description>
     <depends>com.intellij.modules.platform</depends>
 
     <extensions defaultExtensionNs="com.intellij">
-        <fileType name="PO" implementationClass="net.poedit.light.PoFileType" fieldName="INSTANCE"
+        <fileType name="PO" implementationClass="io.github.pavelcpp.poeditor.PoFileType" fieldName="INSTANCE"
                   language="TEXT" extensions="po"/>
-        <fileEditorProvider implementation="net.poedit.light.PoEditorProvider"/>
-        <applicationService serviceImplementation="net.poedit.light.PoSettings"/>
-        <applicationConfigurable parentId="tools" instance="net.poedit.light.PoSettingsConfigurable"
-                                 id="net.poedit.light.settings" displayName="POEditor"/>
+        <fileEditorProvider implementation="io.github.pavelcpp.poeditor.PoEditorProvider"/>
+        <applicationService serviceImplementation="io.github.pavelcpp.poeditor.PoSettings"/>
+        <applicationConfigurable parentId="tools" instance="io.github.pavelcpp.poeditor.PoSettingsConfigurable"
+                                 id="poeditor.settings" displayName="POEditor"/>
     </extensions>
 
     <actions>
         <!-- Poedit's default shortcuts (Windows/Linux). Rebind in Settings | Keymap | POEditor. -->
         <group id="POEditor.Actions" text="POEditor" popup="true">
-            <action id="POEditor.Next" class="net.poedit.light.PoNext" text="Next Translation"
+            <action id="POEditor.Next" class="io.github.pavelcpp.poeditor.PoNext" text="Next Translation"
                     description="Select the next entry">
                 <keyboard-shortcut keymap="$default" first-keystroke="control DOWN"/>
             </action>
-            <action id="POEditor.Previous" class="net.poedit.light.PoPrevious" text="Previous Translation"
+            <action id="POEditor.Previous" class="io.github.pavelcpp.poeditor.PoPrevious" text="Previous Translation"
                     description="Select the previous entry">
                 <keyboard-shortcut keymap="$default" first-keystroke="control UP"/>
             </action>
-            <action id="POEditor.NextUnfinished" class="net.poedit.light.PoNextUnfinished" text="Next Unfinished"
+            <action id="POEditor.NextUnfinished" class="io.github.pavelcpp.poeditor.PoNextUnfinished" text="Next Unfinished"
                     description="Select the next untranslated or needs-work entry">
                 <keyboard-shortcut keymap="$default" first-keystroke="control shift DOWN"/>
             </action>
-            <action id="POEditor.PreviousUnfinished" class="net.poedit.light.PoPreviousUnfinished" text="Previous Unfinished"
+            <action id="POEditor.PreviousUnfinished" class="io.github.pavelcpp.poeditor.PoPreviousUnfinished" text="Previous Unfinished"
                     description="Select the previous untranslated or needs-work entry">
                 <keyboard-shortcut keymap="$default" first-keystroke="control shift UP"/>
             </action>
-            <action id="POEditor.DoneAndNext" class="net.poedit.light.PoDoneAndNext" text="Done and Next"
+            <action id="POEditor.DoneAndNext" class="io.github.pavelcpp.poeditor.PoDoneAndNext" text="Done and Next"
                     description="Approve the entry and go to the next unfinished one">
                 <keyboard-shortcut keymap="$default" first-keystroke="control ENTER"/>
             </action>
-            <action id="POEditor.PreviouslyEdited" class="net.poedit.light.PoPreviouslyEdited" text="Previously Edited"
+            <action id="POEditor.PreviouslyEdited" class="io.github.pavelcpp.poeditor.PoPreviouslyEdited" text="Previously Edited"
                     description="Go back to the entry edited before this one">
                 <keyboard-shortcut keymap="$default" first-keystroke="control shift ENTER"/>
             </action>
-            <action id="POEditor.NextPage" class="net.poedit.light.PoNextPage" text="Next Page"
+            <action id="POEditor.NextPage" class="io.github.pavelcpp.poeditor.PoNextPage" text="Next Page"
                     description="Scroll the entry list down by a page">
                 <keyboard-shortcut keymap="$default" first-keystroke="control PAGE_DOWN"/>
             </action>
-            <action id="POEditor.PreviousPage" class="net.poedit.light.PoPreviousPage" text="Previous Page"
+            <action id="POEditor.PreviousPage" class="io.github.pavelcpp.poeditor.PoPreviousPage" text="Previous Page"
                     description="Scroll the entry list up by a page">
                 <keyboard-shortcut keymap="$default" first-keystroke="control PAGE_UP"/>
             </action>
-            <action id="POEditor.PreviousForm" class="net.poedit.light.PoPreviousForm" text="Previous Plural Form"
+            <action id="POEditor.PreviousForm" class="io.github.pavelcpp.poeditor.PoPreviousForm" text="Previous Plural Form"
                     description="Switch to the previous plural form">
                 <keyboard-shortcut keymap="$default" first-keystroke="control alt LEFT"/>
             </action>
-            <action id="POEditor.NextForm" class="net.poedit.light.PoNextForm" text="Next Plural Form"
+            <action id="POEditor.NextForm" class="io.github.pavelcpp.poeditor.PoNextForm" text="Next Plural Form"
                     description="Switch to the next plural form">
                 <keyboard-shortcut keymap="$default" first-keystroke="control alt RIGHT"/>
             </action>
-            <action id="POEditor.ClearTranslation" class="net.poedit.light.PoClearTranslation" text="Clear Translation"
+            <action id="POEditor.ClearTranslation" class="io.github.pavelcpp.poeditor.PoClearTranslation" text="Clear Translation"
                     description="Empty all translation forms of the entry">
                 <keyboard-shortcut keymap="$default" first-keystroke="control K"/>
             </action>
-            <action id="POEditor.CopyFromSource" class="net.poedit.light.PoCopyFromSource" text="Copy from Source Text"
+            <action id="POEditor.CopyFromSource" class="io.github.pavelcpp.poeditor.PoCopyFromSource" text="Copy from Source Text"
                     description="Use the source text as the translation">
                 <keyboard-shortcut keymap="$default" first-keystroke="control B"/>
             </action>
-            <action id="POEditor.CopyFromSingular" class="net.poedit.light.PoCopyFromSingular" text="Copy from Singular"
+            <action id="POEditor.CopyFromSingular" class="io.github.pavelcpp.poeditor.PoCopyFromSingular" text="Copy from Singular"
                     description="Use the singular source text in every plural form">
                 <keyboard-shortcut keymap="$default" first-keystroke="control shift B"/>
             </action>
-            <action id="POEditor.ToggleNeedsWork" class="net.poedit.light.PoToggleNeedsWork" text="Translation Needs Work"
+            <action id="POEditor.ToggleNeedsWork" class="io.github.pavelcpp.poeditor.PoToggleNeedsWork" text="Translation Needs Work"
                     description="Toggle the fuzzy flag">
                 <keyboard-shortcut keymap="$default" first-keystroke="control U"/>
             </action>
-            <action id="POEditor.EditComment" class="net.poedit.light.PoEditComment" text="Edit Comment"
+            <action id="POEditor.EditComment" class="io.github.pavelcpp.poeditor.PoEditComment" text="Edit Comment"
                     description="Edit the translator comment">
                 <keyboard-shortcut keymap="$default" first-keystroke="control M"/>
             </action>
-            <action id="POEditor.Find" class="net.poedit.light.PoFind" text="Find"
+            <action id="POEditor.Find" class="io.github.pavelcpp.poeditor.PoFind" text="Find"
                     description="Focus the search field">
                 <keyboard-shortcut keymap="$default" first-keystroke="control F"/>
             </action>
-            <action id="POEditor.Suggest" class="net.poedit.light.PoSuggest" text="Suggest Translation"
+            <action id="POEditor.Suggest" class="io.github.pavelcpp.poeditor.PoSuggest" text="Suggest Translation"
                     description="Ask the machine translation service for a suggestion (shown under the translation)">
                 <keyboard-shortcut keymap="$default" first-keystroke="control T"/>
             </action>
-            <action id="POEditor.UseSuggestion" class="net.poedit.light.PoUseSuggestion" text="Use Suggestion"
+            <action id="POEditor.UseSuggestion" class="io.github.pavelcpp.poeditor.PoUseSuggestion" text="Use Suggestion"
                     description="Put the shown suggestion into the translation">
                 <keyboard-shortcut keymap="$default" first-keystroke="control 1"/>
             </action>
@@ -98,7 +120,7 @@
     </actions>
 
     <projectListeners>
-        <listener class="net.poedit.light.PoOpenListener"
+        <listener class="io.github.pavelcpp.poeditor.PoOpenListener"
                   topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
     </projectListeners>
 </idea-plugin>

@@ -1,4 +1,4 @@
-package net.poedit.light
+package io.github.pavelcpp.poeditor
 
 /** One PO entry. [start]/[end] are its offsets in the document text, so edits can be spliced in place. */
 class PoEntry {

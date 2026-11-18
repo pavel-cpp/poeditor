@@ -1,4 +1,4 @@
-package net.poedit.light
+package io.github.pavelcpp.poeditor
 
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent

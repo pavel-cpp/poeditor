@@ -1,4 +1,4 @@
-package net.poedit.light
+package io.github.pavelcpp.poeditor
 
 import org.junit.Assert.*
 import org.junit.Test
