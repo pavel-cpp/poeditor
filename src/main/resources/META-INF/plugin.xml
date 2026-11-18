@@ -14,6 +14,9 @@
         <fileType name="PO" implementationClass="net.poedit.light.PoFileType" fieldName="INSTANCE"
                   language="TEXT" extensions="po"/>
         <fileEditorProvider implementation="net.poedit.light.PoEditorProvider"/>
+        <applicationService serviceImplementation="net.poedit.light.PoSettings"/>
+        <applicationConfigurable parentId="tools" instance="net.poedit.light.PoSettingsConfigurable"
+                                 id="net.poedit.light.settings" displayName="POEditor"/>
     </extensions>
 
     <actions>
@@ -82,6 +85,14 @@
             <action id="POEditor.Find" class="net.poedit.light.PoFind" text="Find"
                     description="Focus the search field">
                 <keyboard-shortcut keymap="$default" first-keystroke="control F"/>
+            </action>
+            <action id="POEditor.Suggest" class="net.poedit.light.PoSuggest" text="Suggest Translation"
+                    description="Ask the machine translation service for a suggestion (shown under the translation)">
+                <keyboard-shortcut keymap="$default" first-keystroke="control T"/>
+            </action>
+            <action id="POEditor.UseSuggestion" class="net.poedit.light.PoUseSuggestion" text="Use Suggestion"
+                    description="Put the shown suggestion into the translation">
+                <keyboard-shortcut keymap="$default" first-keystroke="control 1"/>
             </action>
         </group>
     </actions>

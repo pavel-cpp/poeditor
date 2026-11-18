@@ -16,6 +16,7 @@ val PO_ACTION_IDS = listOf(
     "POEditor.DoneAndNext", "POEditor.PreviouslyEdited", "POEditor.NextPage", "POEditor.PreviousPage",
     "POEditor.PreviousForm", "POEditor.NextForm", "POEditor.ClearTranslation", "POEditor.CopyFromSource",
     "POEditor.CopyFromSingular", "POEditor.ToggleNeedsWork", "POEditor.EditComment", "POEditor.Find",
+    "POEditor.Suggest", "POEditor.UseSuggestion",
 )
 
 /** Runs [run] on the POEditor that is selected in the current project *and* has the keyboard focus; otherwise disabled. */
@@ -47,3 +48,5 @@ class PoCopyFromSingular : PoAction({ copyFromSource(singularOnly = true) })
 class PoToggleNeedsWork : PoAction({ toggleNeedsWork() })
 class PoEditComment : PoAction({ editComment() })
 class PoFind : PoAction({ focusSearch() })
+class PoSuggest : PoAction({ suggest() })
+class PoUseSuggestion : PoAction({ useSuggestion() })

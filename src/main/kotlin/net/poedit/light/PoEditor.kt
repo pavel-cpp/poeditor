@@ -1,7 +1,11 @@
 package net.poedit.light
 
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.runReadActionBlocking
+import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.keymap.KeymapUtil
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.event.DocumentEvent
@@ -31,6 +35,8 @@ import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import java.awt.*
 import java.awt.event.ActionEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.beans.PropertyChangeListener
 import java.io.File
 import javax.swing.*
@@ -45,6 +51,7 @@ object PoFileType : LanguageFileType(PlainTextLanguage.INSTANCE) {
 }
 
 private const val EDITOR_ID = "poedit-light"
+private const val BUSY = "Translating…" // shown in the suggestion box while a request is running
 
 class PoEditorProvider : FileEditorProvider, DumbAware {
     override fun accept(project: Project, file: VirtualFile) = file.extension.equals("po", true)
@@ -91,6 +98,10 @@ class PoEditor(private val project: Project, private val vfile: VirtualFile) : U
     private var userToggledFuzzy = false // like Poedit's m_dontAutoclearFuzzyStatus
     private var formCount = 1            // translation forms shown for the current entry (the "Comment" tab comes after them)
     private val history = ArrayDeque<Pair<String?, String>>() // entries edited by hand, for "Previously Edited"
+    private var requestId = 0                                   // answers of outdated suggestion requests are dropped
+    private var suggested: String? = null                       // the suggestion on screen, applied by "Use"
+    private var suggestionForm = 0                              // ...and the translation form it was asked for
+    private val suggestionCache = java.util.concurrent.ConcurrentHashMap<String, String>() // saves the free quota
 
     private val search = SearchTextField()
     private val filter = ComboBox(arrayOf("All", "Needs work", "Untranslated", "Translated"))
@@ -119,6 +130,43 @@ class PoEditor(private val project: Project, private val vfile: VirtualFile) : U
     private val comment = editable()
     private val refsBar = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply { isOpaque = false }
 
+    // machine translation: shown under the translation, never inserted until "Use"
+    private val suggestButton = JButton("Suggest translation").apply {
+        toolTipText = "Ask the translation service chosen in Settings | Tools | POEditor. Nothing is inserted until you click Use."
+        addActionListener { suggest() }
+    }
+    private val suggestionCaption = JBLabel("", UIUtil.ComponentStyle.MINI, UIUtil.FontColor.BRIGHTER)
+    private val suggestionText = readOnly()
+    private val useLink = link("Use", null) { useSuggestion() }
+    private val settingsLink = link("Settings", null) {
+        ShowSettingsUtil.getInstance().showSettingsDialog(project, PoSettingsConfigurable::class.java)
+    }
+    private val closeSuggestion = JBLabel(AllIcons.Actions.Close).apply {
+        toolTipText = "Close"
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) = hideSuggestion()
+            override fun mouseEntered(e: MouseEvent) { icon = AllIcons.Actions.CloseHovered }
+            override fun mouseExited(e: MouseEvent) { icon = AllIcons.Actions.Close }
+        })
+    }
+    private val suggestionBox = JPanel(BorderLayout(0, JBUI.scale(2))).apply {
+        border = BorderFactory.createCompoundBorder(
+            JBUI.Borders.customLine(JBColor.border(), 1, 0, 0, 0), JBUI.Borders.empty(6, 12))
+        isVisible = false
+        add(JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(suggestionCaption, BorderLayout.WEST)
+            add(JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(12), 0)).apply {
+                isOpaque = false
+                add(settingsLink)
+                add(useLink)
+                add(closeSuggestion)
+            }, BorderLayout.EAST)
+        }, BorderLayout.NORTH)
+        add(flat(suggestionText), BorderLayout.CENTER)
+    }
+
     private val sourceBox = captioned("SOURCE TEXT", flat(source))
     private val pluralBox = captioned("SOURCE TEXT (PLURAL)", flat(sourcePlural))
     private val notesBox = captioned("NOTES FOR TRANSLATORS", flat(notes))
@@ -131,11 +179,15 @@ class PoEditor(private val project: Project, private val vfile: VirtualFile) : U
     // everything below the list: the form plus one thin line ("Needs work" on the left, source references next to it)
     private val bottom = JPanel(BorderLayout()).apply {
         add(JBScrollPane(detail).apply { border = JBUI.Borders.empty() }, BorderLayout.CENTER)
-        add(JPanel(BorderLayout(JBUI.scale(12), 0)).apply {
-            border = BorderFactory.createCompoundBorder(
-                JBUI.Borders.customLine(JBColor.border(), 1, 0, 0, 0), JBUI.Borders.empty(4, 12))
-            add(needsWork, BorderLayout.WEST)
-            add(refsBar, BorderLayout.CENTER)
+        add(JPanel(BorderLayout()).apply {
+            add(suggestionBox, BorderLayout.NORTH)
+            add(JPanel(BorderLayout(JBUI.scale(12), 0)).apply {
+                border = BorderFactory.createCompoundBorder(
+                    JBUI.Borders.customLine(JBColor.border(), 1, 0, 0, 0), JBUI.Borders.empty(4, 12))
+                add(needsWork, BorderLayout.WEST)
+                add(refsBar, BorderLayout.CENTER)
+                add(suggestButton, BorderLayout.EAST)
+            }, BorderLayout.CENTER)
         }, BorderLayout.SOUTH)
     }
 
@@ -354,6 +406,65 @@ class PoEditor(private val project: Project, private val vfile: VirtualFile) : U
         setForms(List(formCount) { i -> if (i > 0 && !singularOnly) e.plural ?: e.id else e.id })
     }
 
+    /** Asks the chosen service for a translation of the visible form and shows it under the translation (no insertion). */
+    fun suggest() {
+        val e = current ?: return
+        val lang = po.language
+        if (lang.isEmpty()) {
+            showSuggestion(null, "The file has no Language header (e.g. ru_RU), so the target language is unknown.", false)
+            return
+        }
+        val form = tabs.selectedIndex.takeIf { it in 0 until formCount } ?: 0
+        val text = if (form > 0) e.plural ?: e.id else e.id // forms after the first are plural, translate the plural text
+        val id = ++requestId
+        suggestionForm = form
+        suggestButton.isEnabled = false
+        showSuggestion(null, BUSY, false)
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val result = runCatching {
+                val translator = PoSettings.get().translator()
+                translator.name to suggestionCache.getOrPut("${translator.name}|$lang|$text") { translator.translate(text, lang) }
+            }
+            ApplicationManager.getApplication().invokeLater({
+                if (id != requestId) return@invokeLater // the user moved on
+                suggestButton.isEnabled = true
+                result.onSuccess { (service, translation) -> suggested = translation; showSuggestion(service, translation, true) }
+                    .onFailure { showSuggestion(null, it.message ?: it.toString(), false) }
+            }, ModalityState.any())
+        }
+    }
+
+    private fun showSuggestion(service: String?, text: String, ok: Boolean) {
+        if (!ok) suggested = null
+        suggestionCaption.text = if (service != null) "SUGGESTION · ${service.uppercase()}" else "SUGGESTION"
+        fill(suggestionText, text)
+        suggestionText.foreground = if (ok || text == BUSY) UIUtil.getLabelForeground() else JBColor.RED
+        val shortcut = KeymapUtil.getFirstKeyboardShortcutText("POEditor.UseSuggestion")
+        useLink.toolTipText = if (shortcut.isEmpty()) "Put the suggestion into the translation" else "Put the suggestion into the translation ($shortcut)"
+        useLink.isVisible = ok
+        settingsLink.isVisible = !ok && text != BUSY
+        suggestionBox.isVisible = true
+        bottom.revalidate()
+    }
+
+    /** The cross in the suggestion box; also cancels a request that is still running. */
+    private fun hideSuggestion() {
+        requestId++
+        suggested = null
+        suggestionBox.isVisible = false
+        suggestButton.isEnabled = true
+        bottom.revalidate()
+    }
+
+    /** Puts the suggestion into the form it was asked for, through the normal edit path (document write, fuzzy auto-clear). */
+    fun useSuggestion() {
+        val s = suggested ?: return
+        val area = areas.getOrNull(suggestionForm) ?: return
+        tabs.selectedIndex = suggestionForm
+        area.text = s
+        area.requestFocusInWindow()
+    }
+
     fun toggleNeedsWork() { if (current != null) needsWork.doClick() }
 
     fun editComment() {
@@ -374,6 +485,7 @@ class PoEditor(private val project: Project, private val vfile: VirtualFile) : U
         loading = true
         try {
             bottom.isVisible = e != null
+            hideSuggestion() // also drops a request that is still on its way: it belongs to another entry now
             if (e == null) return
             userToggledFuzzy = false
             fill(source, e.id)
