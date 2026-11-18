@@ -1,0 +1,18 @@
+<idea-plugin>
+    <id>net.poedit.light</id>
+    <name>Poedit Light</name>
+    <vendor>poedit-light</vendor>
+    <description><![CDATA[
+        Lightweight visual editor for gettext <code>.po</code> files, modelled on Poedit:
+        entry list with search and filters, source/translation panes, plural forms,
+        "needs work" (fuzzy) flag, translator comments, source references.
+        Edits go straight into the file's text, so Undo, VCS and the plain-text tab keep working.
+    ]]></description>
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <fileType name="PO" implementationClass="net.poedit.light.PoFileType" fieldName="INSTANCE"
+                  extensions="po"/>
+        <fileEditorProvider implementation="net.poedit.light.PoEditorProvider"/>
+    </extensions>
+</idea-plugin>
